@@ -1,7 +1,7 @@
 .{
     .name = .LibreScroll,
     .version = "2.2.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.15.2",
     .paths = .{""},
     .fingerprint = 0x8430d3e5a513e9a2,
 }
