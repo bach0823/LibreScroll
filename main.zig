@@ -444,6 +444,12 @@ const State = struct {
     }
 };
 
+const HMODULE = *const opaque{};
+const HWND = *const opaque{};
+const HMENU = *const opaque{};
+const HICON = *const opaque{};
+const HHOOK = *const opaque{};
+
 extern "kernel32" fn CreateMutexA(?*const SECURITY_ATTRIBUTES, i32, [*:0]const u8) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetModuleFileNameA(?HMODULE, [*]u8, u32) callconv(.winapi) u32;
 extern "kernel32" fn LoadLibraryA([*:0]const u8) callconv(.winapi) ?HMODULE;
@@ -457,6 +463,12 @@ extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) u32;
 extern "kernel32" fn CloseHandle(*const anyopaque) callconv(.winapi) i32;
 extern "kernel32" fn QueryPerformanceCounter(*i64) callconv(.winapi) i32;
 extern "kernel32" fn QueryPerformanceFrequency(*i64) callconv(.winapi) i32;
+
+const SECURITY_ATTRIBUTES = extern struct {
+    nLength: u32,
+    lpSecurityDescriptor: ?*anyopaque,
+    bInheritHandle: i32,
+};
 
 extern "user32" fn GetWindowLongPtrA(HWND, i32) callconv(.winapi) isize;
 extern "user32" fn SetWindowLongPtrA(HWND, i32, isize) callconv(.winapi) isize;
@@ -516,7 +528,6 @@ const HOOKPROC = *const fn (i32, usize, isize) callconv(.winapi) isize;
 const TIMERPROC = *const fn (?HWND, u32, usize, u32) callconv(.winapi) void;
 const THREADPROC = *const fn (*anyopaque) callconv(.winapi) u32;
 
-const HHOOK = *const opaque{};
 const MSLLHOOKSTRUCT = extern struct {
     pt: [2]i32,
     mouseData: u32,
@@ -627,6 +638,7 @@ extern "shell32" fn IsUserAnAdmin() callconv(.winapi) i32;
 extern "shell32" fn ShellExecuteA(?HWND, ?[*:0]const u8, [*:0]const u8, ?[*:0]const u8, ?[*:0]const u8, i32) callconv(.winapi) ?HMODULE;
 extern "shell32" fn Shell_NotifyIconGetRect(*const NOTIFYICONIDENTIFIER, *[4]i32) callconv(.winapi) i32;
 extern "shell32" fn Shell_NotifyIconA(NIM, *const NOTIFYICONDATAA) callconv(.winapi) i32;
+
 const NIM = enum(u32) {
     ADD = 0,
     MODIFY = 1,
@@ -660,15 +672,6 @@ const NOTIFYICONIDENTIFIER = extern struct {
     guidItem: GUID = @bitCast(@as(u128, 0)),
 };
 
-const HWND = *const opaque{};
-const HMENU = *const opaque{};
-const HICON = *const opaque{};
-const HMODULE = *const opaque{};
-const SECURITY_ATTRIBUTES = extern struct {
-    nLength: u32,
-    lpSecurityDescriptor: ?*anyopaque,
-    bInheritHandle: i32,
-};
 const GUID = extern struct {
     Data1: u32,
     Data2: u16,
