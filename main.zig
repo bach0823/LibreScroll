@@ -242,7 +242,7 @@ fn startThread() bool {
 }
 
 fn hookProc(code: i32, wParam: usize, lParam: isize) callconv(.winapi) isize {
-    if (wParam == 0x207 or wParam == 0x208) {
+    if (code >= 0 and (wParam == 0x207 or wParam == 0x208)) {
         const inf: *const MSLLHOOKSTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
         const pass: usize = @bitCast(MAGIC_WORD);
         if (0 == 3 & inf.flags or pass != inf.dwExtraInfo) return 1;
