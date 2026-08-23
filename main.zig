@@ -299,12 +299,15 @@ fn rawMain(_: ?*anyopaque) callconv(.winapi) u32 {
 
     _ = PostThreadMessageA(main_thread_id, WM_RAW_STARTED, 0, 0);
 
-    const interval_ms = 10;
     var qpf: u64 = undefined;
     var now: u64 = undefined;
     var past: u64 = undefined;
     _ = QueryPerformanceFrequency(@ptrCast(&qpf));
     _ = QueryPerformanceCounter(@ptrCast(&past));
+
+    const USER_TIMER_MINIMUM = 10;
+    const fpscap_interval_ms = 4;
+    const targeted_kiloticks = qpf * @min(fpscap_interval_ms, USER_TIMER_MINIMUM);
 
     var size: u32 = @sizeOf(RAWINPUT.MOUSE);
     var data: RAWINPUT.MOUSE = undefined;
@@ -348,7 +351,7 @@ fn rawMain(_: ?*anyopaque) callconv(.winapi) u32 {
                 state.is_scrolling = false;
             } else if (16 == 16 & flags) {
                 if (timer == 0) {
-                    timer = SetTimer(null, 0, interval_ms, null);
+                    timer = SetTimer(null, 0, USER_TIMER_MINIMUM, null);
                     if (timer == 0) break;
                 }
                 scroll_acu = @splat(0);
@@ -366,7 +369,7 @@ fn rawMain(_: ?*anyopaque) callconv(.winapi) u32 {
         }
         _ = QueryPerformanceCounter(@ptrCast(&now));
         const dt = now - past;
-        if (dt * 1000 > qpf * interval_ms) {
+        if (dt * 1000 > targeted_kiloticks) {
             if (state.step(scroll_acu, dt, qpf)) |send| state.flush(send);
             scroll_acu = @splat(0);
             past = now;
