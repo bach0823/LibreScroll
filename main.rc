@@ -28,7 +28,7 @@ menu MENU {
 }
 
 
-CFGDLG DIALOGEX 0x8000, 0x8000, 143, 130
+CFGDLG DIALOGEX 0x8000, 0x8000, 143, 166
 STYLE 0x00C80048
 CAPTION "LibreScroll options"
 FONT 8.5, "MS Shell Dlg"
@@ -43,8 +43,13 @@ FONT 8.5, "MS Shell Dlg"
     EDITTEXT                            0x4003, 71, 35,     69, 12
     EDITTEXT                            0x4004, 71, 51,     69, 12, 0x2000
     EDITTEXT                            0x4005, 71, 67,     69, 12, 0x2000
-    AUTOCHECKBOX    "Flick mode",       0x4006, 71, 83,     69, 12
-    AUTOCHECKBOX    "ThinkPad mode",    0x4007, 71, 99,     69, 12
-    PUSHBUTTON      "Pause",            104,    2 , 114,    69, 14
-    DEFPUSHBUTTON   "Apply",            106,    72, 114,    69, 14
+    AUTOCHECKBOX    "Flick mode",       0x4006, 7 , 83,     130, 12
+    AUTOCHECKBOX    "ThinkPad mode",    0x4007, 7 , 99,     130, 12
+    AUTOCHECKBOX    "Mouse 1 + Mouse 2",0x4015, 7 , 115,    130, 12
+    AUTOCHECKBOX    "Keyboard",         0x4016, 7 , 131,    60, 12
+    EDITTEXT                            0x4010, 71, 131,    30, 12, 0x0801
+    CTEXT           "+",                -1,     101,131,    8,  12
+    EDITTEXT                            0x4013, 109,131,    30, 12, 0x0801
+    PUSHBUTTON      "Pause",            104,    2 , 148,    69, 14
+    DEFPUSHBUTTON   "Apply",            106,    72, 148,    69, 14
 }

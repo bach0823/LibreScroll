@@ -5,6 +5,10 @@ stepY: i32 = 1,
 stepX: i32 = 1,
 flick: i32 = 0,
 think: i32 = 0,
+enable_m1m2: i32 = 1,
+enable_kb: i32 = 1,
+kb_key1: i32 = 0x12, // Alt
+kb_key2: i32 = 0,    // 0 = None
 
 var global_config: @This() = .{};
 var process_mutex: *anyopaque = undefined;
@@ -23,7 +27,23 @@ const WM_RAW_STOPPED = 0x8002;
 const WM_RAW_STARTED = 0x8003;
 const WM_HOOK_STOPPED = 0x8004;
 const WM_HOOK_STARTED = 0x8005;
+const WM_START_SCROLL = 0x8010;
+const WM_STOP_SCROLL  = 0x8011;
 const TRAY_UID = 0x69;
+
+var m1_is_down: bool = false;
+var m2_is_down: bool = false;
+var m3_is_down: bool = false;
+var chord_active: bool = false;
+var suppress_next_m1_up: bool = false;
+var suppress_next_m2_up: bool = false;
+var kb_trigger_active: bool = false;
+
+var temp_key1: i32 = 0x12;
+var temp_key2: i32 = 0;
+var recording_hwnd: ?HWND = null;
+var hKey1_hwnd: ?HWND = null;
+var hKey2_hwnd: ?HWND = null;
 
 pub fn main() void {
     process_mutex = CreateMutexA(null, 1, "LibreScroll") orelse return;
@@ -38,6 +58,13 @@ pub fn main() void {
     const hSensX = GetDlgItem(hwndTray, 0x4003) orelse return;
     _ = SetWindowLongPtrA(hSensY, -21, SetWindowLongPtrA(hSensY, -4, @bitCast(@intFromPtr(&inputProc))));
     _ = SetWindowLongPtrA(hSensX, -21, SetWindowLongPtrA(hSensX, -4, @bitCast(@intFromPtr(&inputProc))));
+
+    const hKey1 = GetDlgItem(hwndTray, 0x4010) orelse return;
+    const hKey2 = GetDlgItem(hwndTray, 0x4013) orelse return;
+    hKey1_hwnd = hKey1;
+    hKey2_hwnd = hKey2;
+    _ = SetWindowLongPtrA(hKey1, -21, SetWindowLongPtrA(hKey1, -4, @bitCast(@intFromPtr(&keyInputProc))));
+    _ = SetWindowLongPtrA(hKey2, -21, SetWindowLongPtrA(hKey2, -4, @bitCast(@intFromPtr(&keyInputProc))));
 
     const ico = ico: {
         const cpl = LoadLibraryA("main.cpl") orelse break :ico null;
@@ -91,6 +118,18 @@ pub fn main() void {
                     _ = SetWindowLongA(hUnpause, -12, 104);
                 }
             }
+        } else if (recording_hwnd) |rec_h| {
+            if (msg.message == 0x0100 or msg.message == 0x0104) { // WM_KEYDOWN, WM_SYSKEYDOWN
+                _ = SendMessageA(rec_h, msg.message, msg.wParam, msg.lParam);
+                continue;
+            } else if (msg.message == 0x0101 or msg.message == 0x0105) { // WM_KEYUP, WM_SYSKEYUP
+                _ = SendMessageA(rec_h, msg.message, msg.wParam, msg.lParam);
+                continue;
+            }
+            if (0 == IsDialogMessageA(hwndTray, &msg)) {
+                _ = TranslateMessage(&msg);
+                _ = DispatchMessageA(&msg);
+            }
         } else if (0 == IsDialogMessageA(hwndTray, &msg)) {
             _ = TranslateMessage(&msg);
             _ = DispatchMessageA(&msg);
@@ -115,6 +154,119 @@ fn inputProc(hwnd: HWND, uMsg: u32, wParam: usize, lParam: isize) callconv(.wina
             else => if (wParam != '-' or 0 != SendMessageA(hwnd, 0x00B0, 0, 0)) return 0,
             '0'...'9' => {},
         }
+    }
+    const proc: WNDPROC = @ptrFromInt(@as(usize, @bitCast(GetWindowLongPtrA(hwnd, -21))));
+    return CallWindowProcA(proc, hwnd, uMsg, wParam, lParam);
+}
+
+fn getKeyName(vk: u32) [*:0]const u8 {
+    return switch (vk) {
+        0 => "None",
+        0x10, 0xA0, 0xA1 => "Shift",
+        0x11, 0xA2, 0xA3 => "Ctrl",
+        0x12, 0xA4, 0xA5 => "Alt",
+        0x20 => "Space",
+        0x09 => "Tab",
+        0x14 => "Caps Lock",
+        0x0D => "Enter",
+        0xC0 => "` (Backtick)",
+        0x70 => "F1",
+        0x71 => "F2",
+        0x72 => "F3",
+        0x73 => "F4",
+        0x74 => "F5",
+        0x75 => "F6",
+        0x76 => "F7",
+        0x77 => "F8",
+        0x78 => "F9",
+        0x79 => "F10",
+        0x7A => "F11",
+        0x7B => "F12",
+        0x05 => "Mouse 4",
+        0x06 => "Mouse 5",
+        'A'...'Z' => switch (vk) {
+            'A' => "A", 'B' => "B", 'C' => "C", 'D' => "D", 'E' => "E",
+            'F' => "F", 'G' => "G", 'H' => "H", 'I' => "I", 'J' => "J",
+            'K' => "K", 'L' => "L", 'M' => "M", 'N' => "N", 'O' => "O",
+            'P' => "P", 'Q' => "Q", 'R' => "R", 'S' => "S", 'T' => "T",
+            'U' => "U", 'V' => "V", 'W' => "W", 'X' => "X", 'Y' => "Y",
+            'Z' => "Z",
+            else => "Key",
+        },
+        '0'...'9' => switch (vk) {
+            '0' => "0", '1' => "1", '2' => "2", '3' => "3", '4' => "4",
+            '5' => "5", '6' => "6", '7' => "7", '8' => "8", '9' => "9",
+            else => "Key",
+        },
+        else => "Key",
+    };
+}
+
+fn intToStr(val: i32, buf: *[16:0]u8) [*:0]const u8 {
+    if (val == 0) {
+        buf[0] = '0';
+        buf[1] = 0;
+        return buf;
+    }
+    var v = val;
+    var idx: usize = 0;
+    var temp: [16]u8 = undefined;
+    while (v > 0) : (v = @divTrunc(v, 10)) {
+        temp[idx] = @intCast('0' + @mod(v, 10));
+        idx += 1;
+    }
+    var i: usize = 0;
+    while (i < idx) : (i += 1) {
+        buf[i] = temp[idx - 1 - i];
+    }
+    buf[idx] = 0;
+    return buf;
+}
+
+fn keyInputProc(hwnd: HWND, uMsg: u32, wParam: usize, lParam: isize) callconv(.winapi) isize {
+    switch (uMsg) {
+        0x0087 => { // WM_GETDLGCODE
+            return 0x0004; // DLGC_WANTALLKEYS
+        },
+        0x0201 => { // WM_LBUTTONDOWN
+            recording_hwnd = hwnd;
+            _ = SetFocus(hwnd);
+            _ = SetWindowTextA(hwnd, "...");
+            return 0;
+        },
+        0x0102 => { // WM_CHAR
+            return 0;
+        },
+        0x0008 => { // WM_KILLFOCUS
+            if (recording_hwnd == hwnd) {
+                recording_hwnd = null;
+                const k: u32 = @intCast(if (hwnd == hKey1_hwnd) temp_key1 else temp_key2);
+                _ = SetWindowTextA(hwnd, getKeyName(k));
+            }
+        },
+        0x0100, 0x0104 => { // WM_KEYDOWN, WM_SYSKEYDOWN
+            if (recording_hwnd == hwnd) {
+                const vk: u32 = @truncate(wParam);
+                recording_hwnd = null;
+                if (vk == 0x1B or vk == 0x08 or vk == 0x2E) { // Esc, Backspace, Delete -> None
+                    if (hwnd == hKey1_hwnd) {
+                        temp_key1 = 0;
+                    } else {
+                        temp_key2 = 0;
+                    }
+                    _ = SetWindowTextA(hwnd, "None");
+                } else {
+                    if (hwnd == hKey1_hwnd) {
+                        temp_key1 = @intCast(vk);
+                    } else {
+                        temp_key2 = @intCast(vk);
+                    }
+                    _ = SetWindowTextA(hwnd, getKeyName(vk));
+                }
+                return 0;
+            }
+        },
+        else => {},
     }
     const proc: WNDPROC = @ptrFromInt(@as(usize, @bitCast(GetWindowLongPtrA(hwnd, -21))));
     return CallWindowProcA(proc, hwnd, uMsg, wParam, lParam);
@@ -204,6 +356,12 @@ fn show(hwnd: HWND) void {
     _ = SetDlgItemInt(  hwnd, 0x4005, @bitCast(global_config.stepX), 0 );
     _ = CheckDlgButton( hwnd, 0x4006, @bitCast(global_config.flick)    );
     _ = CheckDlgButton( hwnd, 0x4007, @bitCast(global_config.think)    );
+    _ = CheckDlgButton( hwnd, 0x4015, @bitCast(global_config.enable_m1m2) );
+    _ = CheckDlgButton( hwnd, 0x4016, @bitCast(global_config.enable_kb)   );
+    temp_key1 = global_config.kb_key1;
+    temp_key2 = global_config.kb_key2;
+    _ = SetDlgItemTextA(hwnd, 0x4010, getKeyName(@intCast(global_config.kb_key1)));
+    _ = SetDlgItemTextA(hwnd, 0x4013, getKeyName(@intCast(global_config.kb_key2)));
     if (0 == IsWindowVisible(hwnd)) _ = ShowWindowAsync(hwnd, 5);
     _ = SetForegroundWindow(hwnd);
 }
@@ -218,6 +376,11 @@ fn save(hwnd: HWND) void {
     }
     _ = WritePrivateProfileStringA(sec, "flick", if (0 == IsDlgButtonChecked(hwnd, 0x4006)) "0" else "1", ini);
     _ = WritePrivateProfileStringA(sec, "think", if (0 == IsDlgButtonChecked(hwnd, 0x4007)) "0" else "1", ini);
+    _ = WritePrivateProfileStringA(sec, "enable_m1m2", if (0 == IsDlgButtonChecked(hwnd, 0x4015)) "0" else "1", ini);
+    _ = WritePrivateProfileStringA(sec, "enable_kb", if (0 == IsDlgButtonChecked(hwnd, 0x4016)) "0" else "1", ini);
+    var num_buf: [16:0]u8 = undefined;
+    _ = WritePrivateProfileStringA(sec, "kb_key1", intToStr(temp_key1, &num_buf), ini);
+    _ = WritePrivateProfileStringA(sec, "kb_key2", intToStr(temp_key2, &num_buf), ini);
 }
 
 fn startThread() bool {
@@ -230,6 +393,10 @@ fn startThread() bool {
     global_config.stepX = @max( 0 ,           GetPrivateProfileIntA(sec, "stepX", global_config.stepX, ini)   );
     global_config.flick = @max( 0 , @min( 1 , GetPrivateProfileIntA(sec, "flick", global_config.flick, ini) ) );
     global_config.think = @max( 0 , @min( 1 , GetPrivateProfileIntA(sec, "think", global_config.think, ini) ) );
+    global_config.enable_m1m2 = @max( 0 , @min( 1 , GetPrivateProfileIntA(sec, "enable_m1m2", global_config.enable_m1m2, ini) ) );
+    global_config.enable_kb = @max( 0 , @min( 1 , GetPrivateProfileIntA(sec, "enable_kb", global_config.enable_kb, ini) ) );
+    global_config.kb_key1 = GetPrivateProfileIntA(sec, "kb_key1", global_config.kb_key1, ini);
+    global_config.kb_key2 = GetPrivateProfileIntA(sec, "kb_key2", global_config.kb_key2, ini);
     raw_thread_handle = CreateThread(
         null,
         0,
@@ -241,19 +408,115 @@ fn startThread() bool {
     return true;
 }
 
-fn hookProc(code: i32, wParam: usize, lParam: isize) callconv(.winapi) isize {
-    if (code >= 0 and (wParam == 0x207 or wParam == 0x208)) {
+fn mouseHookProc(code: i32, wParam: usize, lParam: isize) callconv(.winapi) isize {
+    if (code >= 0) {
         const inf: *const MSLLHOOKSTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
         const pass: usize = @bitCast(MAGIC_WORD);
-        if (0 == 3 & inf.flags or pass != inf.dwExtraInfo) return 1;
+        const is_injected = (0 != (3 & inf.flags)) and (pass == inf.dwExtraInfo);
+
+        if (!is_injected) {
+            switch (wParam) {
+                0x0207 => return 1, // WM_MBUTTONDOWN
+                0x0208 => return 1, // WM_MBUTTONUP
+                0x0201 => { // WM_LBUTTONDOWN
+                    if (global_config.enable_m1m2 != 0 and m2_is_down) return 1;
+                },
+                0x0202 => { // WM_LBUTTONUP
+                    if (global_config.enable_m1m2 != 0 and suppress_next_m1_up) {
+                        suppress_next_m1_up = false;
+                        return 1;
+                    }
+                },
+                0x0204 => { // WM_RBUTTONDOWN
+                    if (global_config.enable_m1m2 != 0 and m1_is_down) return 1;
+                },
+                0x0205 => { // WM_RBUTTONUP
+                    if (global_config.enable_m1m2 != 0 and suppress_next_m2_up) {
+                        suppress_next_m2_up = false;
+                        return 1;
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+    return CallNextHookEx(null, code, wParam, lParam);
+}
+
+fn isVkDown(vk: i32) bool {
+    if (vk == 0) return false;
+    return (0 != (GetAsyncKeyState(vk) & @as(i16, @bitCast(@as(u16, 0x8000)))));
+}
+
+fn matchVk(input_vk: u32, target_vk: i32) bool {
+    if (target_vk <= 0) return false;
+    const t: u32 = @intCast(target_vk);
+    if (input_vk == t) return true;
+    if (t == 0x12 and (input_vk == 0xA4 or input_vk == 0xA5)) return true;
+    if (t == 0x11 and (input_vk == 0xA2 or input_vk == 0xA3)) return true;
+    if (t == 0x10 and (input_vk == 0xA0 or input_vk == 0xA1)) return true;
+    return false;
+}
+
+fn keyboardHookProc(code: i32, wParam: usize, lParam: isize) callconv(.winapi) isize {
+    if (code >= 0 and global_config.enable_kb != 0) {
+        const inf: *const KBDLLHOOKSTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
+        const pass: usize = @bitCast(MAGIC_WORD);
+        const is_injected = (pass == inf.dwExtraInfo);
+
+        if (!is_injected) {
+            const k1 = global_config.kb_key1;
+            const k2 = global_config.kb_key2;
+
+            if (k1 != 0 or k2 != 0) {
+                const matches_k1 = matchVk(inf.vkCode, k1);
+                const matches_k2 = matchVk(inf.vkCode, k2);
+
+                if (matches_k1 or matches_k2) {
+                    const is_down = (wParam == 0x0100 or wParam == 0x0104); // WM_KEYDOWN / WM_SYSKEYDOWN
+                    const is_up   = (wParam == 0x0101 or wParam == 0x0105); // WM_KEYUP / WM_SYSKEYUP
+
+                    if (k1 != 0 and k2 != 0) {
+                        if (is_down) {
+                            const other_key = if (matches_k1) k2 else k1;
+                            if (isVkDown(other_key)) {
+                                if (!kb_trigger_active) {
+                                    kb_trigger_active = true;
+                                    _ = PostThreadMessageA(raw_thread_id, WM_START_SCROLL, 0, 0);
+                                }
+                                return 1;
+                            }
+                        } else if (is_up and kb_trigger_active) {
+                            kb_trigger_active = false;
+                            _ = PostThreadMessageA(raw_thread_id, WM_STOP_SCROLL, 0, 0);
+                            return 1;
+                        }
+                    } else {
+                        if (is_down) {
+                            if (!kb_trigger_active) {
+                                kb_trigger_active = true;
+                                _ = PostThreadMessageA(raw_thread_id, WM_START_SCROLL, 0, 0);
+                            }
+                            return 1;
+                        } else if (is_up and kb_trigger_active) {
+                            kb_trigger_active = false;
+                            _ = PostThreadMessageA(raw_thread_id, WM_STOP_SCROLL, 0, 0);
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
     }
     return CallNextHookEx(null, code, wParam, lParam);
 }
 
 fn hookMain(_: ?*anyopaque) callconv(.winapi) u32 {
     defer _ = PostThreadMessageA(raw_thread_id, 0x0012, 0, 0);
-    const hhook = SetWindowsHookExA(14, hookProc, null, 0) orelse return 0;
-    defer _ = UnhookWindowsHookEx(hhook);
+    const mouse_hook = SetWindowsHookExA(14, mouseHookProc, null, 0) orelse return 0;
+    defer _ = UnhookWindowsHookEx(mouse_hook);
+    const kb_hook = SetWindowsHookExA(13, keyboardHookProc, null, 0) orelse return 0;
+    defer _ = UnhookWindowsHookEx(kb_hook);
     _ = PostThreadMessageA(raw_thread_id, WM_HOOK_STARTED, 0, 0);
     var msg: MSG = undefined;
     while (GetMessageA(&msg, null, 0, 0) > 0) {
@@ -322,49 +585,150 @@ fn rawMain(_: ?*anyopaque) callconv(.winapi) u32 {
             if (WM_HOOK_STARTED == msg.message) hook_active = true;
             continue;
         }
+
+        if (msg.message == WM_START_SCROLL) {
+            if (!state.is_scrolling) {
+                if (timer == 0) {
+                    timer = SetTimer(null, 0, USER_TIMER_MINIMUM, null);
+                }
+                scroll_acu = @splat(0);
+                state.vel = @splat(0);
+                state.is_scrolling = true;
+                _ = GetCursorPos(state.rect[0..2]);
+                state.rect[2] = state.rect[0] + 1;
+                state.rect[3] = state.rect[1] + 1;
+                _ = ClipCursor(&state.rect);
+            }
+            continue;
+        } else if (msg.message == WM_STOP_SCROLL) {
+            if (state.is_scrolling and !chord_active and !m3_is_down) {
+                if (global_config.flick == 0) {
+                    if (0 != KillTimer(null, timer)) timer = 0;
+                }
+                _ = ClipCursor(null);
+                state.is_scrolling = false;
+            }
+            continue;
+        }
+
         if (0xff == msg.message
             and GetRawInputData(msg.lParam, 0x10000003, &data, &size, @sizeOf(RAWINPUT.HEADER)) > 0) _: {
             const flags = data.data.usButtonFlags;
             if (null == data.header.hDevice) {
-                if (unclip_pending and 32 == 32 & flags) {
+                if (unclip_pending and 32 == (32 & flags)) {
                     unclip_pending = false;
                     _ = ClipCursor(null);
                 }
                 break :_;
             }
+
             if (flags == 0) { // movement only
                 scroll_acu += .{ data.data.lLastX, data.data.lLastY };
-            } else if (32 == 32 & flags) {
-                if (global_config.flick == 0) {
+            } else {
+                if (16 == (16 & flags)) { // RI_MOUSE_BUTTON_3_DOWN (Mouse 3)
+                    m3_is_down = true;
+                    if (timer == 0) {
+                        timer = SetTimer(null, 0, USER_TIMER_MINIMUM, null);
+                    }
+                    scroll_acu = @splat(0);
+                    state.vel = @splat(0);
+                    state.is_scrolling = true;
+                    state.scroll_pending = true;
+                    _ = GetCursorPos(state.rect[0..2]);
+                    state.rect[2] = state.rect[0] + 1;
+                    state.rect[3] = state.rect[1] + 1;
+                    _ = ClipCursor(&state.rect);
+                } else if (32 == (32 & flags)) { // RI_MOUSE_BUTTON_3_UP (Mouse 3)
+                    m3_is_down = false;
+                    if (state.scroll_pending) {
+                        unclip_pending = true;
+                        _ = INPUT.send(&.{
+                            .mi(.{ .dwFlags = 0x20, .dwExtraInfo = @bitCast(MAGIC_WORD) }),
+                            .mi(.{ .dwFlags = 0x40, .dwExtraInfo = @bitCast(MAGIC_WORD) }),
+                        });
+                    } else if (!chord_active and !kb_trigger_active) {
+                        _ = ClipCursor(null);
+                    }
+                    state.scroll_pending = false;
+                    if (!chord_active and !kb_trigger_active) {
+                        if (global_config.flick == 0) {
+                            if (0 != KillTimer(null, timer)) timer = 0;
+                        }
+                        state.is_scrolling = false;
+                    }
+                }
+
+                if (global_config.enable_m1m2 != 0) {
+                    if (0 != (flags & 0x0001)) { // RI_MOUSE_BUTTON_1_DOWN
+                        m1_is_down = true;
+                        if (m2_is_down and !chord_active) {
+                            chord_active = true;
+                            suppress_next_m1_up = true;
+                            suppress_next_m2_up = true;
+                            _ = INPUT.send(&.{
+                                .mi(.{ .dwFlags = 0x0010, .dwExtraInfo = @bitCast(MAGIC_WORD) }), // MOUSEEVENTF_RIGHTUP
+                            });
+                            if (timer == 0) timer = SetTimer(null, 0, USER_TIMER_MINIMUM, null);
+                            scroll_acu = @splat(0);
+                            state.vel = @splat(0);
+                            state.is_scrolling = true;
+                            _ = GetCursorPos(state.rect[0..2]);
+                            state.rect[2] = state.rect[0] + 1;
+                            state.rect[3] = state.rect[1] + 1;
+                            _ = ClipCursor(&state.rect);
+                        }
+                    }
+                    if (0 != (flags & 0x0004)) { // RI_MOUSE_BUTTON_2_DOWN
+                        m2_is_down = true;
+                        if (m1_is_down and !chord_active) {
+                            chord_active = true;
+                            suppress_next_m1_up = true;
+                            suppress_next_m2_up = true;
+                            _ = INPUT.send(&.{
+                                .mi(.{ .dwFlags = 0x0004, .dwExtraInfo = @bitCast(MAGIC_WORD) }), // MOUSEEVENTF_LEFTUP
+                            });
+                            if (timer == 0) timer = SetTimer(null, 0, USER_TIMER_MINIMUM, null);
+                            scroll_acu = @splat(0);
+                            state.vel = @splat(0);
+                            state.is_scrolling = true;
+                            _ = GetCursorPos(state.rect[0..2]);
+                            state.rect[2] = state.rect[0] + 1;
+                            state.rect[3] = state.rect[1] + 1;
+                            _ = ClipCursor(&state.rect);
+                        }
+                    }
+                    if (0 != (flags & 0x0002)) { // RI_MOUSE_BUTTON_1_UP
+                        m1_is_down = false;
+                        if (chord_active) {
+                            chord_active = false;
+                            if (!kb_trigger_active and !m3_is_down) {
+                                if (global_config.flick == 0) {
+                                    if (0 != KillTimer(null, timer)) timer = 0;
+                                }
+                                _ = ClipCursor(null);
+                                state.is_scrolling = false;
+                            }
+                        }
+                    }
+                    if (0 != (flags & 0x0008)) { // RI_MOUSE_BUTTON_2_UP
+                        m2_is_down = false;
+                        if (chord_active) {
+                            chord_active = false;
+                            if (!kb_trigger_active and !m3_is_down) {
+                                if (global_config.flick == 0) {
+                                    if (0 != KillTimer(null, timer)) timer = 0;
+                                }
+                                _ = ClipCursor(null);
+                                state.is_scrolling = false;
+                            }
+                        }
+                    }
+                }
+
+                if (global_config.flick != 0 and !state.is_scrolling) {
+                    state.vel = @splat(0); // in flick mode, any mouse action besides the above should immediately halt
                     if (0 != KillTimer(null, timer)) timer = 0;
                 }
-                if (state.scroll_pending) {
-                    unclip_pending = true;
-                    _ = INPUT.send(&.{
-                        .mi(.{ .dwFlags = 0x20, .dwExtraInfo = @bitCast(MAGIC_WORD) }),
-                        .mi(.{ .dwFlags = 0x40, .dwExtraInfo = @bitCast(MAGIC_WORD) }),
-                    });
-                } else {
-                    _ = ClipCursor(null);
-                }
-                state.scroll_pending = false;
-                state.is_scrolling = false;
-            } else if (16 == 16 & flags) {
-                if (timer == 0) {
-                    timer = SetTimer(null, 0, USER_TIMER_MINIMUM, null);
-                    if (timer == 0) break;
-                }
-                scroll_acu = @splat(0);
-                state.vel = @splat(0);
-                state.is_scrolling = true;
-                state.scroll_pending = true;
-                _ = GetCursorPos(state.rect[0..2]);
-                state.rect[2] = state.rect[0] + 1;
-                state.rect[3] = state.rect[1] + 1;
-                _ = ClipCursor(&state.rect);
-            } else if (global_config.flick != 0 and !state.is_scrolling) {
-                state.vel = @splat(0); // in flick mode, any mouse action besides the above should immediately halt
-                if (0 != KillTimer(null, timer)) timer = 0;
             }
         }
         _ = QueryPerformanceCounter(@ptrCast(&now));
@@ -477,6 +841,7 @@ extern "user32" fn GetWindowLongPtrA(HWND, i32) callconv(.winapi) isize;
 extern "user32" fn SetWindowLongPtrA(HWND, i32, isize) callconv(.winapi) isize;
 extern "user32" fn SetWindowLongA(HWND, i32, i32) callconv(.winapi) i32;
 extern "user32" fn SetWindowTextA(HWND, ?[*:0]const u8) callconv(.winapi) i32;
+extern "user32" fn SetFocus(?HWND) callconv(.winapi) ?HWND;
 extern "user32" fn CreateWindowExA(u32, ?[*:0]const u8, ?[*:0]const u8, u32, i32, i32, i32, i32, ?HWND, ?HMENU, ?HMODULE, ?*anyopaque) callconv(.winapi) ?HWND;
 extern "user32" fn DestroyWindow(HWND) callconv(.winapi) i32;
 extern "user32" fn ShowWindowAsync(HWND, i32) callconv(.winapi) i32;
@@ -508,6 +873,7 @@ extern "user32" fn GetDlgItem(?HWND, i32) callconv(.winapi) ?HWND;
 extern "user32" fn SetDlgItemInt(HWND, i32, u32, i32) callconv(.winapi) i32;
 extern "user32" fn GetDlgItemInt(HWND, i32, ?*i32, i32) callconv(.winapi) u32;
 extern "user32" fn GetDlgItemTextA(HWND, i32, [*:0]u8, i32) callconv(.winapi) u32;
+extern "user32" fn SetDlgItemTextA(HWND, i32, [*:0]const u8) callconv(.winapi) i32;
 extern "user32" fn IsDialogMessageA(HWND, *MSG) callconv(.winapi) i32;
 extern "user32" fn IsDlgButtonChecked(HWND, i32) callconv(.winapi) u32;
 extern "user32" fn CheckDlgButton(HWND, i32, u32) callconv(.winapi) i32;
@@ -515,6 +881,7 @@ extern "user32" fn SetWindowsHookExA(i32, HOOKPROC, ?HMODULE, u32) callconv(.win
 extern "user32" fn UnhookWindowsHookEx(HHOOK) callconv(.winapi) i32;
 extern "user32" fn CallNextHookEx(?HHOOK, i32, usize, isize) callconv(.winapi) isize;
 extern "user32" fn CallWindowProcA(WNDPROC, HWND, u32, usize, isize) callconv(.winapi) isize;
+extern "user32" fn GetAsyncKeyState(i32) callconv(.winapi) i16;
 
 const DPI_AWARENESS_CONTEXT = enum(isize) {
     NULL = 0,
@@ -534,6 +901,14 @@ const THREADPROC = *const fn (*anyopaque) callconv(.winapi) u32;
 const MSLLHOOKSTRUCT = extern struct {
     pt: [2]i32,
     mouseData: u32,
+    flags: u32,
+    time: u32,
+    dwExtraInfo: usize,
+};
+
+const KBDLLHOOKSTRUCT = extern struct {
+    vkCode: u32,
+    scanCode: u32,
     flags: u32,
     time: u32,
     dwExtraInfo: usize,
